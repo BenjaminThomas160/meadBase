@@ -1,7 +1,9 @@
 
+import json
 import psycopg
 import string
 from psycopg_pool import ConnectionPool
+import db.dataObjects as dataObjects
 class DataAccess:
     def __init__(self, conninfo):
         self.pool = ConnectionPool(conninfo)
@@ -57,8 +59,7 @@ class DataAccess:
                     ingredients JSONB NOT NULL,
                     notes TEXT,
                     created_at TIMESTAMP DEFAULT NOW(),
-                    updated_at TIMESTAMP DEFAULT NOW(),
-                    CONSTRAINT ingredients_is_array CHECK (jsonb_typeof(ingredients) = 'array')
+                    updated_at TIMESTAMP DEFAULT NOW()
                 );
                 """
                 cur.execute(query=query)
@@ -87,7 +88,7 @@ class DataAccess:
                 CREATE TABLE IF NOT EXISTS yeast_types (
                     id SERIAL PRIMARY KEY,
                     name TEXT NOT NULL UNIQUE,
-                    farmer TEXT,
+                    max_abv Numeric(10,5),
                     price_per_gram NUMERIC(6,2),
                     volume_in_stock_grams NUMERIC(10,5),
                     notes TEXT,
@@ -96,6 +97,49 @@ class DataAccess:
                 ); 
                 """
                 cur.execute(query=query)
+
+    def insert_new_batch(self, data: dataObjects.batchData): 
+        with self.pool.connection() as conn, conn.transaction():
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM mead_batches b INNER JOIN mead_recipes r on b.recipe_id = r.id WHERE b.recipe_id = %s", (data.recipe_id))
+                num_batches = len(cur.fetchall()) + 1
+                cur.execute("""
+                INSERT INTO mead_batches (
+                    name,
+                    recipe_id,
+                    batch_number,  
+                    fermentation_start_date,
+                    fermentation_end_date,
+                    secondary_fermentation_start_date,
+                    secondary_fermentation_end_date,
+                    honey_id,
+                    yeast_id,
+                    volume_litres,
+                    initial_gravity,
+                    final_gravity,
+                    abv,
+                    status,
+                    notes,
+                    created_at,
+                    updated_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """, (data.name, 
+                      data.recipe_id, 
+                      num_batches, 
+                      data.fementation_start_date, 
+                      data.fermentation_end_date,
+                      data.secondary_fermentation_start_date,
+                      data.secondary_fermentation_end_date,
+                      data.honey_id,
+                      data.yeast_id,
+                      data.volume_litres,
+                      data.initial_gravity,
+                      data.final_gravity,
+                      data.abv,
+                      data.status,
+                      data.notes,
+                      data.created_at,
+                      data.updated_at))
 
     def insert_honey_type(self, name: string, farmer: string, price_per_kilo: float, volume: float, notes: string) -> int:
         with self.pool.connection() as conn, conn.transaction():
@@ -109,12 +153,58 @@ class DataAccess:
                 VALUES (%s, %s, %s, %s, %s);
                 """, (name, farmer, price_per_kilo, volume, notes))
     
+    def insert_yeast_type(self, data: dataObjects.yeastData):
+        with self.pool.connection() as conn, conn.transaction():
+            with conn.cursor() as cur:
+                cur.execute("""
+                INSERT INTO yeast_types (name, max_abv, price_per_gram, volume_in_stock_grams, notes)
+                VALUES (%s, %s, %s, %s, %s)
+                """, (data.name, data.max_abv, data.price_per_gram, data.volume_in_stock_grams, data.notes))
+
+    def insert_new_recipe(self, data: dataObjects.recipeData):
+        with self.pool.connection() as conn, conn.transaction():
+            with conn.cursor() as cur:
+                ingredients = json.dumps(data.ingredients)
+                cur.execute("""
+                INSERT INTO mead_recipes (
+                    name,
+                    style,
+                    honey_volume,
+                    water_volume,
+                    honey_id,
+                    yeast_id,
+                    ingredients,
+                    notes)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                """, (data.name, data.style, data.honey_volume, data.water_volume, data.honey_id, data.yeast_id, ingredients, data.notes))
+
     def select_honey_type(self, name):
         with self.pool.connection() as conn, conn.transaction():
             with conn.cursor() as cur:
                 cur.execute("SELECT * from honey_types WHERE name = %s", (name,))
                 return cur.fetchall()
 
-# yeast table
-# honey table
-# shopping list table
+    def select_batches(self):
+        with self.pool.connection() as conn, conn.transaction():
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM mead_batches;")
+                return cur.fetchall()
+
+    def select_yeast_types(self):
+        with self.pool.connection() as conn, conn.transaction():
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM yeast_types;")
+                return cur.fetchall()
+
+    def select_honey_types(self):
+        with self.pool.connection() as conn, conn.transaction():
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM honey_types;")
+                return cur.fetchall()
+
+    def select_recipes(self):
+        with self.pool.connection() as conn, conn.transaction():
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM mead_recipes;")
+                return cur.fetchall()
+# add user security and stuff for diff users once auth stuff is taken care of
